@@ -7,7 +7,10 @@ class BlackHole:
         self.trial = 0  # contador de estancamiento para la radiación de hawking
 
 class BBH_MMKP_UDP_Optimizer:
-    def __init__(self, datos_instancia, num_estrellas=25, max_iter=2000, pr=0.1, prob_slingshot=0.15):
+    def __init__(self, datos_instancia, num_estrellas=25, max_iter=2000, pr=0.1, prob_slingshot=0.15, 
+                 radio_horizonte=10, delta_incremento=0.005, distancia_max_fusion=2,
+                 limite_evaporacion=35, delta_enfriamiento=0.005):
+        
         self.datos = datos_instancia
         self.num_estrellas = num_estrellas
         self.max_iter = max_iter
@@ -20,10 +23,12 @@ class BBH_MMKP_UDP_Optimizer:
         self.m_restricciones = datos_instancia['m']
         self.mapeo_grupos = datos_instancia['mapeo_grupos']
         
-        # parámetros gravitatorios
-        self.radio_horizonte = 60
-        self.delta_incremento = 0.005
-        self.distancia_max_fusion = 24
+        # parámetros gravitatorios y térmicos unificados
+        self.radio_horizonte = radio_horizonte
+        self.delta_incremento = delta_incremento
+        self.distancia_max_fusion = distancia_max_fusion
+        self.limite_evaporacion = limite_evaporacion      # <-- Ahora es propiedad del objeto
+        self.delta_enfriamiento = delta_enfriamiento      # <-- Ahora es propiedad del objeto
         
         self.f_crit = self.calcular_fcrit_inicial()
         self.lista_bh = []
@@ -73,9 +78,6 @@ class BBH_MMKP_UDP_Optimizer:
         print(f"\n[bucle] comenzando simulación espacial con {self.num_estrellas} estrellas...")
         print(f"[bucle] umbral crítico inicial (f_crit): {self.f_crit:.2f}")
         
-        limite_evaporacion = 35
-        delta_enfriamiento = 0.005
-        
         for iteracion in range(self.max_iter):
             conteo_evaporaciones = 0
             conteo_slingshot = 0
@@ -97,7 +99,6 @@ class BBH_MMKP_UDP_Optimizer:
                     self.master_bh = BlackHole(vector_binario=lider_actual.vector_binario.copy(), fitness=lider_actual.fitness)
 
             # --- FASE 2: MOVIMIENTO DE ESTRELLAS Y EVENTOS GRAVITATORIOS ---
-            # Asegurar que el master siempre ejerza gravedad si la lista dinámica se vacía
             if len(self.lista_bh) == 0 and self.master_bh is not None:
                 self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
 
@@ -165,25 +166,24 @@ class BBH_MMKP_UDP_Optimizer:
                 if self.master_bh is None or lider_actual.fitness > self.master_bh.fitness:
                     self.master_bh = BlackHole(vector_binario=lider_actual.vector_binario.copy(), fitness=lider_actual.fitness)
 
-            # --- FASE 4: EVAPORACIÓN POR RADIACIÓN DE HAWKING CON BLINDAJE DE ÉLITE ---
+            # --- FASE 4: EVAPORACIÓN POR RADIACIÓN DE HAWKING ---
             indices_para_evaporar = []
             if len(self.lista_bh) > 0:
                 mejor_bh_actual = max(self.lista_bh, key=lambda x: x.fitness)
                 
                 for idx, bh in enumerate(self.lista_bh):
-                    # BLINDAJE 1: Si es el mejor absoluto actual de la lista, Hawking es ciego a él
                     if bh == mejor_bh_actual or (self.master_bh is not None and bh.fitness == self.master_bh.fitness):
                         continue
                         
-                    if bh.trial >= limite_evaporacion:
+                    if bh.trial >= self.limite_evaporacion:  # <-- Uso de self.
                         indices_para_evaporar.append(idx)
-                        self.f_crit *= (1 - delta_enfriamiento)
+                        self.f_crit *= (1 - self.delta_enfriamiento)  # <-- Uso de self.
                         conteo_evaporaciones += 1
             
             if indices_para_evaporar:
                 self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in indices_para_evaporar]
 
-            # --- FASE 5: FUSIÓN POR PROXIMIDAD EXTREMA CON PROTECCIÓN DE LÍDER ---
+            # --- FASE 5: FUSIÓN POR PROXIMIDAD EXTREMA ---
             if len(self.lista_bh) > 1:
                 mejor_bh_actual = max(self.lista_bh, key=lambda x: x.fitness)
                 marcados_para_eliminar = set()
@@ -197,7 +197,6 @@ class BBH_MMKP_UDP_Optimizer:
                         if dist <= self.distancia_max_fusion:
                             conteo_colisiones += 1
                             
-                            # BLINDAJE 2: Identificar cuál es el que se debe preservar protegiendo al rey
                             if self.lista_bh[i] == mejor_bh_actual:
                                 marcados_para_eliminar.add(j)
                             elif self.lista_bh[j] == mejor_bh_actual:
@@ -210,7 +209,6 @@ class BBH_MMKP_UDP_Optimizer:
                 
                 self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in marcados_para_eliminar]
 
-            # BLINDAJE 3: Si por alguna colisión la lista quedó vacía, el master_bh re-estabiliza el espacio
             if len(self.lista_bh) == 0 and self.master_bh is not None:
                 self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
 
@@ -225,5 +223,4 @@ class BBH_MMKP_UDP_Optimizer:
                       f"colisiones: {conteo_colisiones:<2d} | "
                       f"f_crit: {self.f_crit:.1f}")
 
-        # Retornamos el Agujero Negro definitivo que dominó la historia
         return max(self.lista_bh, key=lambda x: x.fitness) if len(self.lista_bh) > 0 else self.master_bh
