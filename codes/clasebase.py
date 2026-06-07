@@ -1,0 +1,229 @@
+import numpy as np
+
+class BlackHole:
+    def __init__(self, vector_binario, fitness):
+        self.vector_binario = vector_binario.copy()
+        self.fitness = fitness
+        self.trial = 0  # contador de estancamiento para la radiación de hawking
+
+class BBH_MMKP_UDP_Optimizer:
+    def __init__(self, datos_instancia, num_estrellas=25, max_iter=2000, pr=0.1, prob_slingshot=0.15):
+        self.datos = datos_instancia
+        self.num_estrellas = num_estrellas
+        self.max_iter = max_iter
+        self.pr = pr
+        self.prob_slingshot = prob_slingshot
+        
+        # dimensiones del hipercubo binario
+        self.total_items = datos_instancia['r_ij_k'].shape[0]
+        self.n_grupos = datos_instancia['n']
+        self.m_restricciones = datos_instancia['m']
+        self.mapeo_grupos = datos_instancia['mapeo_grupos']
+        
+        # parámetros gravitatorios
+        self.radio_horizonte = 60
+        self.delta_incremento = 0.005
+        self.distancia_max_fusion = 24
+        
+        self.f_crit = self.calcular_fcrit_inicial()
+        self.lista_bh = []
+        self.poblacion = self.inicializar_poblacion_estrellas()
+        
+        # Guardián del Óptimo histórico absoluto del universo
+        self.master_bh = None
+
+    def calcular_fcrit_inicial(self):
+        """ calcula el umbral inicial basado en el beneficio promedio de los grupos """
+        beneficios = self.datos['V_ij']
+        return float((np.sum(beneficios) / beneficios.size) * self.n_grupos)
+
+    class Estrella:
+        def __init__(self, vector, fitness):
+            self.vector_binario = vector.copy()
+            self.fitness = fitness
+
+    def inicializar_poblacion_estrellas(self):
+        poblacion_inicial = []
+        for _ in range(self.num_estrellas):
+            vec = np.zeros(self.total_items, dtype=int)
+            vec = self.reparar_estructura_mmkp(vec)
+            fit = self.evaluar_fitness_mochila(vec)
+            poblacion_inicial.append(self.Estrella(vec, fit))
+        return poblacion_inicial
+
+    def reparar_estructura_mmkp(self, vec):
+        nuevo_vec = vec.copy()
+        for grupo, indices in self.mapeo_grupos.items():
+            if np.sum(nuevo_vec[indices]) != 1:
+                nuevo_vec[indices] = 0
+                elegido = np.random.choice(indices)
+                nuevo_vec[elegido] = 1
+        return nuevo_vec
+
+    def evaluar_fitness_mochila(self, vec):
+        consumos = np.dot(vec, self.datos['r_ij_k'])
+        if np.any(consumos > self.datos['b_k']):
+            return 0.0
+        return float(np.dot(vec, self.datos['V_ij']))
+
+    def calcular_distancia_hamming(self, vec1, vec2):
+        return int(np.sum(vec1 != vec2))
+
+    def optimizar(self):
+        print(f"\n[bucle] comenzando simulación espacial con {self.num_estrellas} estrellas...")
+        print(f"[bucle] umbral crítico inicial (f_crit): {self.f_crit:.2f}")
+        
+        limite_evaporacion = 35
+        delta_enfriamiento = 0.005
+        
+        for iteracion in range(self.max_iter):
+            conteo_evaporaciones = 0
+            conteo_slingshot = 0
+            conteo_colisiones = 0
+            
+            # --- FASE 1: REGISTRO DE AGUJEROS NEGROS CON UMBRAL ESCALABLE ---
+            for s in self.poblacion:
+                ya_es_bh = any(self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) == 0 for bh in self.lista_bh)
+                
+                if s.fitness >= self.f_crit and not ya_es_bh:
+                    nuevo_bh = BlackHole(vector_binario=s.vector_binario.copy(), fitness=s.fitness)
+                    self.lista_bh.append(nuevo_bh)
+                    self.f_crit *= (1 + self.delta_incremento)
+            
+            # Actualizar el guardián absoluto si aparece algo mejor en la simulación
+            if len(self.lista_bh) > 0:
+                lider_actual = max(self.lista_bh, key=lambda x: x.fitness)
+                if self.master_bh is None or lider_actual.fitness > self.master_bh.fitness:
+                    self.master_bh = BlackHole(vector_binario=lider_actual.vector_binario.copy(), fitness=lider_actual.fitness)
+
+            # --- FASE 2: MOVIMIENTO DE ESTRELLAS Y EVENTOS GRAVITATORIOS ---
+            # Asegurar que el master siempre ejerza gravedad si la lista dinámica se vacía
+            if len(self.lista_bh) == 0 and self.master_bh is not None:
+                self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
+
+            vectores_bh_activos = [bh.vector_binario for bh in self.lista_bh]
+            
+            for s in self.poblacion:
+                es_bh_activo = any(self.calcular_distancia_hamming(s.vector_binario, v) == 0 for v in vectores_bh_activos)
+                if es_bh_activo:
+                    continue
+                
+                if len(self.lista_bh) > 0:
+                    distancias = [self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) for bh in self.lista_bh]
+                    bh_asignado = self.lista_bh[np.argmin(distancias)]
+                    
+                    for d in range(self.total_items):
+                        if np.random.rand() < self.pr:
+                            s.vector_binario[d] = bh_asignado.vector_binario[d]
+                    
+                    s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
+                    s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
+                    
+                    if self.calcular_distancia_hamming(s.vector_binario, bh_asignado.vector_binario) < self.radio_horizonte:
+                        if np.random.rand() < self.prob_slingshot:
+                            for d in range(self.total_items):
+                                if s.vector_binario[d] != bh_asignado.vector_binario[d]:
+                                    s.vector_binario[d] = 1 - s.vector_binario[d]
+                            s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
+                            s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
+                            conteo_slingshot += 1
+                            
+                            if s.fitness == 0:
+                                s.vector_binario = self.reparar_estructura_mmkp(np.random.randint(0, 2, self.total_items))
+                                s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
+                        else:
+                            s.vector_binario = self.reparar_estructura_mmkp(np.random.randint(0, 2, self.total_items))
+                            s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
+                else:
+                    mascara_mutacion_alta = np.random.rand(self.total_items) < 0.5
+                    s.vector_binario[mascara_mutacion_alta] = 1 - s.vector_binario[mascara_mutacion_alta]
+                    s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
+                    s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
+
+            # --- FASE 3: MOVIMIENTO DE AUTO-REFINAMIENTO DE LOS AGUJEROS NEGROS ---
+            for bh in self.lista_bh:
+                bh_intento_vec = bh.vector_binario.copy()
+                grupo_azar = np.random.choice(list(self.mapeo_grupos.keys()))
+                indices_del_grupo = self.mapeo_grupos[grupo_azar]
+                
+                bh_intento_vec[indices_del_grupo] = 0
+                objeto_elegido = np.random.choice(indices_del_grupo)
+                bh_intento_vec[objeto_elegido] = 1
+                
+                bh_intento_vec = self.reparar_estructura_mmkp(bh_intento_vec)
+                fit_intento = self.evaluar_fitness_mochila(bh_intento_vec)
+                
+                if fit_intento > bh.fitness:
+                    bh.vector_binario = bh_intento_vec.copy()
+                    bh.fitness = fit_intento
+                    bh.trial = 0
+                else:
+                    bh.trial += 1
+            
+            if len(self.lista_bh) > 0:
+                lider_actual = max(self.lista_bh, key=lambda x: x.fitness)
+                if self.master_bh is None or lider_actual.fitness > self.master_bh.fitness:
+                    self.master_bh = BlackHole(vector_binario=lider_actual.vector_binario.copy(), fitness=lider_actual.fitness)
+
+            # --- FASE 4: EVAPORACIÓN POR RADIACIÓN DE HAWKING CON BLINDAJE DE ÉLITE ---
+            indices_para_evaporar = []
+            if len(self.lista_bh) > 0:
+                mejor_bh_actual = max(self.lista_bh, key=lambda x: x.fitness)
+                
+                for idx, bh in enumerate(self.lista_bh):
+                    # BLINDAJE 1: Si es el mejor absoluto actual de la lista, Hawking es ciego a él
+                    if bh == mejor_bh_actual or (self.master_bh is not None and bh.fitness == self.master_bh.fitness):
+                        continue
+                        
+                    if bh.trial >= limite_evaporacion:
+                        indices_para_evaporar.append(idx)
+                        self.f_crit *= (1 - delta_enfriamiento)
+                        conteo_evaporaciones += 1
+            
+            if indices_para_evaporar:
+                self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in indices_para_evaporar]
+
+            # --- FASE 5: FUSIÓN POR PROXIMIDAD EXTREMA CON PROTECCIÓN DE LÍDER ---
+            if len(self.lista_bh) > 1:
+                mejor_bh_actual = max(self.lista_bh, key=lambda x: x.fitness)
+                marcados_para_eliminar = set()
+                
+                for i in range(len(self.lista_bh)):
+                    for j in range(i + 1, len(self.lista_bh)):
+                        if i in marcados_para_eliminar or j in marcados_para_eliminar:
+                            continue
+                        
+                        dist = self.calcular_distancia_hamming(self.lista_bh[i].vector_binario, self.lista_bh[j].vector_binario)
+                        if dist <= self.distancia_max_fusion:
+                            conteo_colisiones += 1
+                            
+                            # BLINDAJE 2: Identificar cuál es el que se debe preservar protegiendo al rey
+                            if self.lista_bh[i] == mejor_bh_actual:
+                                marcados_para_eliminar.add(j)
+                            elif self.lista_bh[j] == mejor_bh_actual:
+                                marcados_para_eliminar.add(i)
+                            else:
+                                if self.lista_bh[i].fitness >= self.lista_bh[j].fitness:
+                                    marcados_para_eliminar.add(j)
+                                else:
+                                    marcados_para_eliminar.add(i)
+                
+                self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in marcados_para_eliminar]
+
+            # BLINDAJE 3: Si por alguna colisión la lista quedó vacía, el master_bh re-estabiliza el espacio
+            if len(self.lista_bh) == 0 and self.master_bh is not None:
+                self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
+
+            # --- reporte por consola ---
+            if iteracion % 50 == 0 or iteracion == self.max_iter - 1:
+                mejor_f_actual = max([bh.fitness for bh in self.lista_bh]) if len(self.lista_bh) > 0 else 0.0
+                print(f"[iter {iteracion:04d}] "
+                      f"mej_Z: {mejor_f_actual:<7.1f} | "
+                      f"act_BHs: {len(self.lista_bh):<2d} | "
+                      f"evap_hawking: {conteo_evaporaciones:<2d} | "
+                      f"slingshot: {conteo_slingshot:<2d} | "
+                      f"colisiones: {conteo_colisiones:<2d} | "
+                      f"f_crit: {self.f_crit:.1f}")
+
+        # Retornamos el Agujero Negro definitivo que dominó la historia
+        return max(self.lista_bh, key=lambda x: x.fitness) if len(self.lista_bh) > 0 else self.master_bh
