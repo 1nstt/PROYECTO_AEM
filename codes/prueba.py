@@ -15,20 +15,19 @@ if __name__ == "__main__":
     
     print("[info] inicializando el optimizador con hiperparámetros de ajuste fino...")
     
-    # Elevamos las iteraciones a 3000 para compensar el enfriamiento lento de f_crit
-    num_iteraciones = 3000 
-    
+    # 2000 it
+    num_iteraciones = 2000
     optimizador = BBH_MMKP_UDP_Optimizer(
         datos_instancia=datos_i07,
-        num_estrellas=40,               # Más estrellas buscando combinaciones válidas
-        max_iter=num_iteraciones,       # Más ciclos de explotación y refinamiento
-        pr=0.45,                        # Equilibrio justo para evitar convergencia prematura
-        prob_slingshot=0.12,            # Escape controlado en zonas cercanas al horizonte
-        radio_horizonte=15,             # Mayor área de captura de estrellas para reestructuración
-        delta_incremento=0.0015,        # Subida lenta de f_crit: permite registrar más BHs alternativos
-        distancia_max_fusion=2,         # Colisión óptima para mantener diversidad en el espacio binario
-        limite_evaporacion=50,          # Hawking agresivo: BHs estancados se evaporan rápido para resetear zonas
-        delta_enfriamiento=0.004        # Enfriamiento balanceado tras evaporación
+        num_estrellas=25,               # SN (Population size) idéntico del paper
+        max_iter=num_iteraciones,       # maxCycle = 2000
+        pr=0.10,                        # pr = 0.10 mapea exactamente d_emp = n/n_i (10%)
+        prob_slingshot=0.08,            # Perturbación moderada de escape
+        radio_horizonte=10,             # Distancia Hamming límite estándar
+        delta_incremento=0.005,         # Ritmo balanceado de f_crit
+        distancia_max_fusion=2,         # Control estricto de duplicados en vecindad
+        limite_evaporacion=75,           # 
+        delta_enfriamiento=0.005        # Enfriamiento térmico simétrico
     )
     
     print("[info] ejecutando simulación de alta intensidad...")

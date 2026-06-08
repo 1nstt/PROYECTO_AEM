@@ -27,8 +27,8 @@ class BBH_MMKP_UDP_Optimizer:
         self.radio_horizonte = radio_horizonte
         self.delta_incremento = delta_incremento
         self.distancia_max_fusion = distancia_max_fusion
-        self.limite_evaporacion = limite_evaporacion      # <-- Ahora es propiedad del objeto
-        self.delta_enfriamiento = delta_enfriamiento      # <-- Ahora es propiedad del objeto
+        self.limite_evaporacion = limite_evaporacion
+        self.delta_enfriamiento = delta_enfriamiento
         
         self.f_crit = self.calcular_fcrit_inicial()
         self.lista_bh = []
@@ -47,11 +47,68 @@ class BBH_MMKP_UDP_Optimizer:
             self.vector_binario = vector.copy()
             self.fitness = fitness
 
+    def generar_solucion_estructurada_paper(self):
+        """
+        Genera un único vector binario viable siguiendo estrictamente la 
+        estrategia initializeSolution del paper MABC.
+        """
+        N_subproblemas = 4
+        dh_intercambios = 10
+        todos_los_grupos = list(self.mapeo_grupos.keys())
+        grupos_por_subproblema = self.n_grupos // N_subproblemas
+        b_p_k = self.datos['b_k'] / N_subproblemas
+
+        vec = np.zeros(self.total_items, dtype=int)
+        grupos_mezclados = todos_los_grupos.copy()
+        np.random.shuffle(grupos_mezclados)
+        
+        for s_idx in range(N_subproblemas):
+            inicio = s_idx * grupos_por_subproblema
+            fin = inicio + grupos_por_subproblema
+            sub_grupos = grupos_mezclados[inicio:fin]
+            
+            # --- CONSTRUCCIÓN CODICIOSA ---
+            for grupo in sub_grupos:
+                indices_items = self.mapeo_grupos[grupo]
+                recursos_items = self.datos['r_ij_k'][indices_items]
+                consumos_relativos = np.sum(recursos_items / self.datos['b_k'], axis=1)
+                mejor_item_local = indices_items[np.argmin(consumos_relativos)]
+                vec[mejor_item_local] = 1
+
+            # --- FASE DE INTERCAMBIOS CONTROLADOS ---
+            d = 0
+            intentos_max = 50
+            intentos = 0
+            while d < dh_intercambios and intentos < intentos_max:
+                intentos += 1
+                grupo_azar = np.random.choice(sub_grupos)
+                indices_items = self.mapeo_grupos[grupo_azar]
+                item_activo = indices_items[np.where(vec[indices_items] == 1)[0][0]]
+                opciones_disponibles = [idx for idx in indices_items if idx != item_activo]
+                item_candidato = np.random.choice(opciones_disponibles)
+                
+                vec[item_activo] = 0
+                vec[item_candidato] = 1
+                
+                items_seleccionados_subproblema = []
+                for g in sub_grupos:
+                    idx_sel = self.mapeo_grupos[g][np.where(vec[self.mapeo_grupos[g]] == 1)[0][0]]
+                    items_seleccionados_subproblema.append(idx_sel)
+                
+                consumo_subproblema = np.sum(self.datos['r_ij_k'][items_seleccionados_subproblema], axis=0)
+                
+                if np.all(consumo_subproblema <= b_p_k):
+                    d += 1
+                else:
+                    vec[item_activo] = 1
+                    vec[item_candidato] = 0
+        return vec
+
     def inicializar_poblacion_estrellas(self):
+        """ Inicializa la población llamando al constructor del paper """
         poblacion_inicial = []
         for _ in range(self.num_estrellas):
-            vec = np.zeros(self.total_items, dtype=int)
-            vec = self.reparar_estructura_mmkp(vec)
+            vec = self.generar_solucion_estructurada_paper()
             fit = self.evaluar_fitness_mochila(vec)
             poblacion_inicial.append(self.Estrella(vec, fit))
         return poblacion_inicial
@@ -92,7 +149,6 @@ class BBH_MMKP_UDP_Optimizer:
                     self.lista_bh.append(nuevo_bh)
                     self.f_crit *= (1 + self.delta_incremento)
             
-            # Actualizar el guardián absoluto si aparece algo mejor en la simulación
             if len(self.lista_bh) > 0:
                 lider_actual = max(self.lista_bh, key=lambda x: x.fitness)
                 if self.master_bh is None or lider_actual.fitness > self.master_bh.fitness:
@@ -130,10 +186,12 @@ class BBH_MMKP_UDP_Optimizer:
                             conteo_slingshot += 1
                             
                             if s.fitness == 0:
-                                s.vector_binario = self.reparar_estructura_mmkp(np.random.randint(0, 2, self.total_items))
+                                # CORRECCIÓN RESPAWN 1: Nace usando el método del paper si cae a fitness 0
+                                s.vector_binario = self.generar_solucion_estructurada_paper()
                                 s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                         else:
-                            s.vector_binario = self.reparar_estructura_mmkp(np.random.randint(0, 2, self.total_items))
+                            # CORRECCIÓN RESPAWN 2: Absorción total del horizonte, respawn inteligente
+                            s.vector_binario = self.generar_solucion_estructurada_paper()
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                 else:
                     mascara_mutacion_alta = np.random.rand(self.total_items) < 0.5
@@ -175,9 +233,9 @@ class BBH_MMKP_UDP_Optimizer:
                     if bh == mejor_bh_actual or (self.master_bh is not None and bh.fitness == self.master_bh.fitness):
                         continue
                         
-                    if bh.trial >= self.limite_evaporacion:  # <-- Uso de self.
+                    if bh.trial >= self.limite_evaporacion:
                         indices_para_evaporar.append(idx)
-                        self.f_crit *= (1 - self.delta_enfriamiento)  # <-- Uso de self.
+                        self.f_crit *= (1 - self.delta_enfriamiento)
                         conteo_evaporaciones += 1
             
             if indices_para_evaporar:
