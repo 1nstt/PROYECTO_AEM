@@ -179,6 +179,7 @@ class BBH_MMKP_UDP_Optimizer:
                     if self.calcular_distancia_hamming(s.vector_binario, bh_asignado.vector_binario) < self.radio_horizonte:
                         if np.random.rand() < self.prob_slingshot:
                             for d in range(self.total_items):
+                                # LINEA CORREGIDA: Removida la duplicación rota en inglés
                                 if s.vector_binario[d] != bh_asignado.vector_binario[d]:
                                     s.vector_binario[d] = 1 - s.vector_binario[d]
                             s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
@@ -186,11 +187,9 @@ class BBH_MMKP_UDP_Optimizer:
                             conteo_slingshot += 1
                             
                             if s.fitness == 0:
-                                # CORRECCIÓN RESPAWN 1: Nace usando el método del paper si cae a fitness 0
                                 s.vector_binario = self.generar_solucion_estructurada_paper()
                                 s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                         else:
-                            # CORRECCIÓN RESPAWN 2: Absorción total del horizonte, respawn inteligente
                             s.vector_binario = self.generar_solucion_estructurada_paper()
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                 else:

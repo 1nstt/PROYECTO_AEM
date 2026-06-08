@@ -15,19 +15,19 @@ if __name__ == "__main__":
     
     print("[info] inicializando el optimizador con hiperparámetros de ajuste fino...")
     
-    # 2000 it
+    # CONFIGURACIÓN QUE LLEGÓ A 2700 EN LA FO CON 2000 ITERACIONES
     num_iteraciones = 2000
     optimizador = BBH_MMKP_UDP_Optimizer(
         datos_instancia=datos_i07,
-        num_estrellas=25,               # SN (Population size) idéntico del paper
-        max_iter=num_iteraciones,       # maxCycle = 2000
-        pr=0.10,                        # pr = 0.10 mapea exactamente d_emp = n/n_i (10%)
-        prob_slingshot=0.08,            # Perturbación moderada de escape
-        radio_horizonte=10,             # Distancia Hamming límite estándar
-        delta_incremento=0.005,         # Ritmo balanceado de f_crit
-        distancia_max_fusion=2,         # Control estricto de duplicados en vecindad
-        limite_evaporacion=75,           # 
-        delta_enfriamiento=0.005        # Enfriamiento térmico simétrico
+        num_estrellas=25,              
+        max_iter=num_iteraciones,      
+        pr=0.05,                        
+        prob_slingshot=0.08,            
+        radio_horizonte=2,             
+        delta_incremento=0.002,        
+        distancia_max_fusion=2,         
+        limite_evaporacion=5,           
+        delta_enfriamiento=0.003        
     )
     
     print("[info] ejecutando simulación de alta intensidad...")

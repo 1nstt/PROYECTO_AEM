@@ -1,5 +1,3 @@
-Algoritmo: BBH-MMKP con Slingshot, Umbral Escalable, BH Móvil, Fusión, Evaporación Hawking y Respawn Estructurado MABC
-
 1.  INICIO
 2.  Definir Parámetros: Num_Estrellas, Max_Iter, Pr, Prob_Slingshot, Delta_Incremento, Distancia_Max_Fusion, Limite_Evaporacion, Delta_Enfriamiento, N_Subproblemas, Dh_Intercambios
 3.  Calcular F_crit inicial: F_crit = (Suma_Total_Beneficios / Total_Objetos) * Total_Grupos
@@ -45,7 +43,7 @@ Algoritmo: BBH-MMKP con Slingshot, Umbral Escalable, BH Móvil, Fusión, Evapora
 39.         ya_es_bh = Comprobar_Si_Existe_Clon_En_Lista(S, Lista_BH)
 40.         SI (Fitness(S) >= F_crit) Y (ya_es_bh == FALSO) ENTONCES:
 41.             Registrar S en Lista_BH 
-42.             Inicializar Contador_Estancamiento(S) = 0
+42.             Contador_Estancamiento(S) = 0
 43.             F_crit = F_crit * (1 + Delta_Incremento)
 44.         FIN SI
 45.     FIN PARA
@@ -88,60 +86,70 @@ Algoritmo: BBH-MMKP con Slingshot, Umbral Escalable, BH Móvil, Fusión, Evapora
 81.         FIN SI
 82.     FIN PARA
 
-83.     // --- FASE 3: MOVIMIENTO DE AUTO-REFINAMIENTO DE LOS AGUJEROS NEGROS ---
+83.     // --- FASE 3: MOVIMIENTO DE AUTO-REFINAMIENTO POR TORNEO ESTOCÁSTICO ---
 84.     PARA cada BH en Lista_BH:
 85.         BH_Intento = Clonar_Copia_Profunda(BH)
 86.         Grupo_Azar = Generar_Entero_Aleatorio(0, Total_Grupos - 1)
-87.         Mutar_Unico_Objeto_Del_Grupo(BH_Intento, Grupo_Azar)
-88.         Reparar_Estructura_MMKP(BH_Intento)
-89.         
-90.         SI (Evaluar_Fitness_Mochila(BH_Intento) > Evaluar_Fitness_Mochila(BH)) ENTONCES:
-91.             BH = BH_Intento
-92.             Contador_Estancamiento(BH) = 0
-93.         SINO:
-94.             Contador_Estancamiento(BH) = Contador_Estancamiento(BH) + 1
-95.         FIN SI
-96.     FIN PARA
+87.         
+88.         // Desactivar el objeto actualmente seleccionado en ese grupo azar
+89.         Apagar_Objeto_Activo_Del_Grupo(BH_Intento, Grupo_Azar)
+90.         
+91.         // Convocar un mini-torneo de 3 candidatos del grupo al azar (Mantiene la exploración)
+92.         Candidatos_Torneo = Seleccionar_N_Objetos_Al_Azar_Del_Grupo(Grupo_Azar, Tamaño_Torneo=3)
+93.         
+94.         // El combate: Elegir al gladiador que maximice la utilidad del paper MABC
+95.         Objeto_Ganador = Calcular_Ganador_Utilidad_Surrogada(Candidatos_Torneo, Capacidad_Mochila_b^k)
+96.         Activar_Objeto_Del_Grupo(BH_Intento, Grupo_Azar, Objeto_Ganador)
+97.         
+98.         Reparar_Estructura_MMKP(BH_Intento)
+99.         
+100.        SI (Evaluar_Fitness_Mochila(BH_Intento) > Evaluar_Fitness_Mochila(BH)) ENTONCES:
+101.            BH = BH_Intento
+102.            Contador_Estancamiento(BH) = 0 // Progreso real detectado
+103.        SINO:
+104.            Contador_Estancamiento(BH) = Contador_Estancamiento(BH) + 1 // No se supera a sí mismo
+105.        FIN SI
+106.    FIN PARA
 
-97.     // --- FASE 4: EVAPORACIÓN POR RADIACIÓN DE HAWKING CON PROTECCIÓN DE ÉLITE ---
-98.    SI (Longitud(Lista_BH) > 0) ENTONCES:
-99.        Mejor_BH_Global = Encontrar_BH_Con_Maximo_Fitness(Lista_BH)
-100.       
-101.        PARA cada BH en Lista_BH:
-102.            SI (BH != Mejor_BH_Global) ENTONCES:
-103.                SI (Contador_Estancamiento(BH) >= Limite_Evaporacion) ENTONCES:
-104.                    Imprimir("¡RADIACIÓN DE HAWKING! Un agujero negro secundario perdió su masa.")
-105.                    Marcar_Para_Evaporar(BH)
-106.                    F_crit = F_crit * (1 - Delta_Enfriamiento)
-107.                FIN SI
-108.            FIN SI
-109.        FIN PARA
-110.        Ejecutar_Evaporacion_De_Marcados(Lista_BH)
-111.    FIN SI
+107.    // --- FASE 4: EVAPORACIÓN POR RADIACIÓN DE HAWKING CON PROTECCIÓN DE ÉLITE ---
+108.    SI (Longitud(Lista_BH) > 0) ENTONCES:
+109.        Mejor_BH_Global = Encontrar_BH_Con_Maximo_Fitness(Lista_BH)
+110.        
+111.        PARA cada BH en Lista_BH:
+112.            SI (BH != Mejor_BH_Global) ENTONCES:
+113.                SI (Contador_Estancamiento(BH) >= Limite_Evaporacion) ENTONCES:
+114.                    Imprimir("¡RADIACIÓN DE HAWKING! Un agujero negro secundario perdió su masa.")
+115.                    Marcar_Para_Evaporar(BH)
+116.                    F_crit = F_crit * (1 - Delta_Enfriamiento)
+117.                FIN SI
+118.            FIN SI
+119.        FIN PARA
+120.        Ejecutar_Evaporacion_De_Marcados(Lista_BH)
+121.    FIN SI
 
-112.    // --- FASE 5: COLISIÓN Y FUSIÓN POR PROXIMIDAD EXTREMA ---
-113.    SI (Longitud(Lista_BH) > 1) ENTONCES:
-114.        PARA i desde 0 hasta Longitud(Lista_BH) - 1 HACER:
-115.            PARA j desde i + 1 hasta Longitud(Lista_BH) - 1 HACER:
-116.                BH1 = Lista_BH[i]
-117.                BH2 = Lista_BH[j]
-118.                
-119.                SI (Calcular_Distancia_Hamming(BH1, BH2) <= Distancia_Max_Fusion) ENTONCES:
-120.                    Imprimir("¡COLISIÓN CÓSMICA! Dos atractores se han encontrado en el hipercubo.")
-121.                    SI (Evaluar_Fitness_Mochila(BH1) >= Evaluar_Fitness_Mochila(BH2)) ENTONCES:
-122.                        Marcar_Para_Eliminar(BH2)
-123.                    SINO:
-124.                        Marcar_Para_Eliminar(BH1)
-125.                    FIN SI
-126.                FIN SI
-127.            FIN PARA
-128.        FIN PARA
-129.        Ejecutar_Eliminacion_De_Marcados(Lista_BH)
-130.    FIN SI
+122.    // --- FASE 5: COLISIÓN Y FUSIÓN POR PROXIMIDAD EXTREMA ---
+123.    SI (Longitud(Lista_BH) > 1) ENTONCES:
+124.        PARA i desde 0 hasta Longitud(Lista_BH) - 1 HACER:
+125.            PARA j desde i + 1 hasta Longitud(Lista_BH) - 1 HACER:
+126.                BH1 = Lista_BH[i]
+127.                BH2 = Lista_BH[j]
+128.                 
+129.                SI (Calcular_Distancia_Hamming(BH1, BH2) <= Distancia_Max_Fusion) ENTONCES:
+130.                    Imprimir("¡COLISIÓN CÓSMICA! Dos atractores se han encontrado en el hipercubo.")
+131.                    SI (Evaluar_Fitness_Mochila(BH1) >= Evaluar_Fitness_Mochila(BH2)) ENTONCES:
+132.                        Marcar_Para_Eliminar(BH2)
+133.                    SINO:
+134.                        Marcar_Para_Eliminar(BH1)
+135.                    FIN SI
+136.                FIN SI
+137.            FIN PARA
+138.        FIN PARA
+139.        Ejecutar_Eliminacion_De_Marcados(Lista_BH)
+140.    FIN SI
 
-133.    Reevaluar_Fitness_Toda_La_Población()
-134.    Incrementar Iteración
-135. FIN MIENTRAS
+141.    Reevaluar_Fitness_Toda_La_Población()
+142.    Incrementar Iteración
+143. FIN MIENTRAS
 
-136. DEVOLVER el miembro con el mejor fitness absoluto dentro de Lista_BH (o población si está vacía)
-137. FIN
+144. DEVOLVER el miembro con el mejor fitness absoluto dentro de Lista_BH (o población si está vacía)
+145. FIN
