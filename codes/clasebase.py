@@ -105,6 +105,9 @@ class BBH_MMKP_UDP_Optimizer:
                     vec[item_candidato] = 0
         return vec
 
+    def initialize_poblacion_estrellas(self):
+        return self.inicializar_poblacion_estrellas()
+
     def inicializar_poblacion_estrellas(self):
         """ Inicializa la población llamando al constructor del paper """
         poblacion_inicial = []
@@ -158,6 +161,10 @@ class BBH_MMKP_UDP_Optimizer:
                 lider_actual = max(self.lista_bh, key=lambda x: x.fitness)
                 if self.master_bh is None or lider_actual.fitness > self.master_bh.fitness:
                     self.master_bh = BlackHole(vector_binario=lider_actual.vector_binario.copy(), fitness=lider_actual.fitness)
+            
+            # --- TOPE MÁXIMO DINÁMICO PARA F_CRIT ---
+            if self.master_bh is not None:
+                self.f_crit = min(self.f_crit, self.master_bh.fitness)
 
             # --- FASE 2: MOVIMIENTO DE ESTRELLAS Y EVENTOS GRAVITATORIOS ---
             if len(self.lista_bh) == 0 and self.master_bh is not None:
@@ -174,27 +181,38 @@ class BBH_MMKP_UDP_Optimizer:
                     distancias = [self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) for bh in self.lista_bh]
                     bh_asignado = self.lista_bh[np.argmin(distancias)]
                     
-                    # --- SOLUCIÓN INTEGRADA: ATRACCIÓN POR BLOQUES DE GRUPO ---
+                    # Atracción limpia por bloques de grupo (Tu mejora)
                     for grupo, indices in self.mapeo_grupos.items():
                         if np.random.rand() < self.pr:
-                            # Apagamos los ítems de la estrella en este grupo
                             s.vector_binario[indices] = 0
-                            # Encontramos la posición exacta del ítem activo en el Agujero Negro y lo copiamos
                             idx_activo_bh = indices[np.where(bh_asignado.vector_binario[indices] == 1)[0][0]]
                             s.vector_binario[idx_activo_bh] = 1
                     
-                    # Estructura garantizada al 100%: Evaluamos directamente el peso de la mochila
                     s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                     
-                    # Horizonte de Eventos y Slingshot
+                    # --- SLINGSHOT GUIADO POR ELITISMO INTEGRAL (CORREGIDO Y SEGURO) ---
                     if self.calcular_distancia_hamming(s.vector_binario, bh_asignado.vector_binario) < self.radio_horizonte:
                         if np.random.rand() < self.prob_slingshot:
-                            for d in range(self.total_items):
-                                if s.vector_binario[d] != bh_asignado.vector_binario[d]:
-                                    s.vector_binario[d] = 1 - s.vector_binario[d]
                             
-                            # El slingshot invierte bits sueltos, por lo que aquí SÍ es mandatorio reparar
-                            s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
+                            todos_los_grupos = list(self.mapeo_grupos.keys())
+                            np.random.shuffle(todos_los_grupos)
+                            
+                            # Cambia el decimal si quieres ensayar otros porcentajes de conservación
+                            limite_conservacion = max(1, int(self.n_grupos * 0.30))
+                            grupos_a_conservar = set(todos_los_grupos[:limite_conservacion])
+                            
+                            for grupo, indices in self.mapeo_grupos.items():
+                                s.vector_binario[indices] = 0 
+                                
+                                if grupo in grupos_a_conservar:
+                                    # Conserva copiando la coordenada estelar del Agujero Negro
+                                    idx_activo_bh = indices[np.where(bh_asignado.vector_binario[indices] == 1)[0][0]]
+                                    s.vector_binario[idx_activo_bh] = 1
+                                else:
+                                    # Prueba violenta al azar en el resto de la mochila
+                                    nueva_opcion_azar = np.random.choice(indices)
+                                    s.vector_binario[nueva_opcion_azar] = 1
+                            
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                             conteo_slingshot += 1
                             

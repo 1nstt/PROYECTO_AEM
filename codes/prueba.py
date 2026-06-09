@@ -23,11 +23,11 @@ if __name__ == "__main__":
         max_iter=num_iteraciones,       # maxCycle = 2000
         pr=0.10,                        # pr = 0.10 mapea exactamente d_emp = n/n_i (10%)
         prob_slingshot=0.08,            # Perturbación moderada de escape
-        radio_horizonte=7,             # Distancia Hamming límite estándar
-        delta_incremento=0.005,         # Ritmo balanceado de f_crit
+        radio_horizonte=6,             # Distancia Hamming límite estándar
+        delta_incremento=0.006,         # Ritmo balanceado de f_crit
         distancia_max_fusion=2,         # Control estricto de duplicados en vecindad
         limite_evaporacion=75,           # 
-        delta_enfriamiento=0.005        # Enfriamiento térmico simétrico
+        delta_enfriamiento=0.006        # Enfriamiento térmico simétrico
     )
     
     print("[info] ejecutando simulación de alta intensidad...")
