@@ -24,7 +24,8 @@ class BBH_MMKP_UDP_Optimizer:
         self.mapeo_grupos = datos_instancia['mapeo_grupos']
         
         # parámetros gravitatorios y térmicos unificados
-        self.radio_horizonte = radio_horizonte
+        self.radio_horizonte_inicial = radio_horizonte # Guardamos el radio base
+        self.radio_horizonte = radio_horizonte         # Este cambiará dinámicamente
         self.delta_incremento = delta_incremento
         self.distancia_max_fusion = distancia_max_fusion
         self.limite_evaporacion = limite_evaporacion
@@ -136,6 +137,10 @@ class BBH_MMKP_UDP_Optimizer:
         print(f"[bucle] umbral crítico inicial (f_crit): {self.f_crit:.2f}")
         
         for iteracion in range(self.max_iter):
+            # --- HORIZONTE DE EVENTOS ADAPTATIVO ---
+            progreso = iteracion / self.max_iter
+            self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * (1.0 - progreso)))
+
             conteo_evaporaciones = 0
             conteo_slingshot = 0
             conteo_colisiones = 0
@@ -169,28 +174,34 @@ class BBH_MMKP_UDP_Optimizer:
                     distancias = [self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) for bh in self.lista_bh]
                     bh_asignado = self.lista_bh[np.argmin(distancias)]
                     
-                    for d in range(self.total_items):
+                    # --- SOLUCIÓN INTEGRADA: ATRACCIÓN POR BLOQUES DE GRUPO ---
+                    for grupo, indices in self.mapeo_grupos.items():
                         if np.random.rand() < self.pr:
-                            s.vector_binario[d] = bh_asignado.vector_binario[d]
+                            # Apagamos los ítems de la estrella en este grupo
+                            s.vector_binario[indices] = 0
+                            # Encontramos la posición exacta del ítem activo en el Agujero Negro y lo copiamos
+                            idx_activo_bh = indices[np.where(bh_asignado.vector_binario[indices] == 1)[0][0]]
+                            s.vector_binario[idx_activo_bh] = 1
                     
-                    s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
+                    # Estructura garantizada al 100%: Evaluamos directamente el peso de la mochila
                     s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                     
+                    # Horizonte de Eventos y Slingshot
                     if self.calcular_distancia_hamming(s.vector_binario, bh_asignado.vector_binario) < self.radio_horizonte:
                         if np.random.rand() < self.prob_slingshot:
                             for d in range(self.total_items):
                                 if s.vector_binario[d] != bh_asignado.vector_binario[d]:
                                     s.vector_binario[d] = 1 - s.vector_binario[d]
+                            
+                            # El slingshot invierte bits sueltos, por lo que aquí SÍ es mandatorio reparar
                             s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                             conteo_slingshot += 1
                             
                             if s.fitness == 0:
-                                # CORRECCIÓN RESPAWN 1: Nace usando el método del paper si cae a fitness 0
                                 s.vector_binario = self.generar_solucion_estructurada_paper()
                                 s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                         else:
-                            # CORRECCIÓN RESPAWN 2: Absorción total del horizonte, respawn inteligente
                             s.vector_binario = self.generar_solucion_estructurada_paper()
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                 else:
@@ -276,6 +287,7 @@ class BBH_MMKP_UDP_Optimizer:
                 print(f"[iter {iteracion:04d}] "
                       f"mej_Z: {mejor_f_actual:<7.1f} | "
                       f"act_BHs: {len(self.lista_bh):<2d} | "
+                      f"rad_horizonte: {self.radio_horizonte:<2d} | " 
                       f"evap_hawking: {conteo_evaporaciones:<2d} | "
                       f"slingshot: {conteo_slingshot:<2d} | "
                       f"colisiones: {conteo_colisiones:<2d} | "
