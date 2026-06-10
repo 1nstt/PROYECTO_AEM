@@ -144,9 +144,9 @@ class BBH_MMKP_UDP_Optimizer:
             
             progreso = iteracion / self.max_iter
             #self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * (1.0 - progreso)))  ####LINEAL
-            self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso))) #### EXPONENCIAL
+            # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso))) #### EXPONENCIAL
 
-            #factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5))) ##### SIGMOIDAL
+            factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5))) ##### SIGMOIDAL
             #self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
             conteo_evaporaciones = 0
             conteo_slingshot = 0
@@ -185,7 +185,7 @@ class BBH_MMKP_UDP_Optimizer:
                     distancias = [self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) for bh in self.lista_bh]
                     bh_asignado = self.lista_bh[np.argmin(distancias)]
                     
-                    # Atracción limpia por bloques de grupo (Tu mejora)
+                    # Atracción limpia por bloques de grupo 
                     for grupo, indices in self.mapeo_grupos.items():
                         if np.random.rand() < self.pr:
                             s.vector_binario[indices] = 0

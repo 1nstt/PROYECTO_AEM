@@ -57,3 +57,7 @@ if __name__ == "__main__":
     total_seleccionados = np.sum(mejor_solucion.vector_binario)
     print(f"▶ total de ítems seleccionados: {total_seleccionados} de {datos_i07['n']} grupos")
     print("=========================================================")
+
+    print("\n▶ vector binario óptimo (solución x_ij):")
+    # Usamos .tolist() para que Python lo imprima limpio en una sola línea continua
+    print(mejor_solucion.vector_binario.tolist())
