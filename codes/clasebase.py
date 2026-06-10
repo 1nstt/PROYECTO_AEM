@@ -24,8 +24,8 @@ class BBH_MMKP_UDP_Optimizer:
         self.mapeo_grupos = datos_instancia['mapeo_grupos']
         
         # parámetros gravitatorios y térmicos unificados
-        self.radio_horizonte_inicial = radio_horizonte # Guardamos el radio base
-        self.radio_horizonte = radio_horizonte         # Este cambiará dinámicamente
+        self.radio_horizonte_inicial = radio_horizonte 
+        self.radio_horizonte = radio_horizonte         
         self.delta_incremento = delta_incremento
         self.distancia_max_fusion = distancia_max_fusion
         self.limite_evaporacion = limite_evaporacion
@@ -52,7 +52,6 @@ class BBH_MMKP_UDP_Optimizer:
         """ calcula el umbral inicial basado en el beneficio promedio de los grupos y el delta manual """
         beneficios = self.datos['V_ij']
         base_fcrit = float((np.sum(beneficios) / beneficios.size) * self.n_grupos)
-        # Sumamos algebraicamente el parámetro de calibración
         return base_fcrit + self.extra_fcrit_inicial
 
     class Estrella:
@@ -121,7 +120,6 @@ class BBH_MMKP_UDP_Optimizer:
         return self.inicializar_poblacion_estrellas()
 
     def inicializar_poblacion_estrellas(self):
-        """ Inicializa la población llamando al constructor del paper """
         poblacion_inicial = []
         for _ in range(self.num_estrellas):
             vec = self.generar_solucion_estructurada_paper()
@@ -145,7 +143,7 @@ class BBH_MMKP_UDP_Optimizer:
         return float(np.dot(vec, self.datos['V_ij']))
 
     def calcular_distancia_hamming(self, vec1, vec2):
-        return int(np.sum(vec1 != vec2))
+        return np.count_nonzero(vec1 != vec2)
 
     def optimizar(self):
         print(f"\n[bucle] comenzando simulación espacial con {self.num_estrellas} estrellas...")
@@ -161,25 +159,39 @@ class BBH_MMKP_UDP_Optimizer:
             # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * (1.0 - progreso)))
             
             # OPCIÓN B: PERFIL EXPONENCIAL (Enfriamiento Rápido)
-            # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso)))
+            self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso)))
             
-            # OPCIÓN C: PERFIL SIGMOIDAL (Enfriamiento Balanceado)
-            factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5)))
-            self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
+            # OPCIÓN C: PERFIL SIGMOIDAL 
+           # factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5)))
+           # self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
             # =================================================================
             
             conteo_evaporaciones = 0
             conteo_slingshot = 0
             conteo_colisiones = 0
             
+            num_bhs_actuales = len(self.lista_bh)
+            if num_bhs_actuales > 0:
+                matriz_bh = np.array([bh.vector_binario for bh in self.lista_bh])
+            else:
+                matriz_bh = None
+
             # --- FASE 1: REGISTRO DE AGUJEROS NEGROS CON UMBRAL ESCALABLE ---
             for s in self.poblacion:
-                ya_es_bh = any(self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) == 0 for bh in self.lista_bh)
-                
-                if s.fitness >= self.f_crit and not ya_es_bh:
-                    nuevo_bh = BlackHole(vector_binario=s.vector_binario.copy(), fitness=s.fitness)
-                    self.lista_bh.append(nuevo_bh)
-                    self.f_crit *= (1 + self.delta_incremento)
+                if s.fitness >= self.f_crit:
+                    if matriz_bh is not None:
+                        ya_es_bh = np.any(np.all(matriz_bh == s.vector_binario, axis=1))
+                    else:
+                        ya_es_bh = False
+                    
+                    if not ya_es_bh:
+                        nuevo_bh = BlackHole(vector_binario=s.vector_binario.copy(), fitness=s.fitness)
+                        self.lista_bh.append(nuevo_bh)
+                        self.f_crit *= (1 + self.delta_incremento)
+                        if matriz_bh is not None:
+                            matriz_bh = np.vstack([matriz_bh, s.vector_binario])
+                        else:
+                            matriz_bh = np.array([s.vector_binario])
             
             if len(self.lista_bh) > self.max_bhs_simultaneos:
                 self.max_bhs_simultaneos = len(self.lista_bh)
@@ -189,24 +201,25 @@ class BBH_MMKP_UDP_Optimizer:
                 if self.master_bh is None or lider_actual.fitness > self.master_bh.fitness:
                     self.master_bh = BlackHole(vector_binario=lider_actual.vector_binario.copy(), fitness=lider_actual.fitness)
             
-            # --- TOPE MÁXIMO DINÁMICO PARA F_CRIT ---
             if self.master_bh is not None:
                 self.f_crit = min(self.f_crit, self.master_bh.fitness)
 
             # --- FASE 2: MOVIMIENTO DE ESTRELLAS Y EVENTOS GRAVITATORIOS ---
             if len(self.lista_bh) == 0 and self.master_bh is not None:
                 self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
+                matriz_bh = np.array([self.master_bh.vector_binario])
 
-            vectores_bh_activos = [bh.vector_binario for bh in self.lista_bh]
-            
-            for s in self.poblacion:
-                es_bh_activo = any(self.calcular_distancia_hamming(s.vector_binario, v) == 0 for v in vectores_bh_activos)
-                if es_bh_activo:
-                    continue
+            if len(self.lista_bh) > 0:
+                matriz_bh = np.array([bh.vector_binario for bh in self.lista_bh])
                 
-                if len(self.lista_bh) > 0:
-                    distancias = [self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) for bh in self.lista_bh]
-                    bh_asignado = self.lista_bh[np.argmin(distancias)]
+                for s in self.poblacion:
+                    if np.any(np.all(matriz_bh == s.vector_binario, axis=1)):
+                        continue
+                    
+                    distancias = np.count_nonzero(matriz_bh != s.vector_binario, axis=1)
+                    idx_asignado = np.argmin(distancias)
+                    bh_asignado = self.lista_bh[idx_asignado]
+                    dist_al_asignado = distancias[idx_asignado]
                     
                     # Atracción limpia por bloques de grupo
                     for grupo, indices in self.mapeo_grupos.items():
@@ -218,9 +231,8 @@ class BBH_MMKP_UDP_Optimizer:
                     s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                     
                     # --- SLINGSHOT GUIADO POR ELITISMO INTEGRAL ---
-                    if self.calcular_distancia_hamming(s.vector_binario, bh_asignado.vector_binario) < self.radio_horizonte:
+                    if dist_al_asignado < self.radio_horizonte:
                         if np.random.rand() < self.prob_slingshot:
-                            
                             fitness_previo_estrella = s.fitness
                             todos_los_grupos = list(self.mapeo_grupos.keys())
                             np.random.shuffle(todos_los_grupos)
@@ -249,12 +261,15 @@ class BBH_MMKP_UDP_Optimizer:
                                 self.slingshots_factibles += 1
                             else:
                                 self.slingshots_infactibles_respawn += 1
+                                # RECTIFICADO AQUÍ A ESPAÑOL:
                                 s.vector_binario = self.generar_solucion_estructurada_paper()
                                 s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                         else:
+                            # RECTIFICADO AQUÍ A ESPAÑOL:
                             s.vector_binario = self.generar_solucion_estructurada_paper()
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
-                else:
+            else:
+                for s in self.poblacion:
                     mascara_mutacion_alta = np.random.rand(self.total_items) < 0.5
                     s.vector_binario[mascara_mutacion_alta] = 1 - s.vector_binario[mascara_mutacion_alta]
                     s.vector_binario = self.reparar_estructura_mmkp(s.vector_binario)
@@ -289,33 +304,41 @@ class BBH_MMKP_UDP_Optimizer:
             indices_para_evaporar = []
             if len(self.lista_bh) > 0:
                 mejor_bh_actual = max(self.lista_bh, key=lambda x: x.fitness)
+                master_fitness = self.master_bh.fitness if self.master_bh is not None else -1
                 
                 for idx, bh in enumerate(self.lista_bh):
-                    if bh == mejor_bh_actual or (self.master_bh is not None and bh.fitness == self.master_bh.fitness):
+                    if bh.trial < self.limite_evaporacion:
+                        continue
+                    if bh == mejor_bh_actual or bh.fitness == master_fitness:
                         continue
                         
-                    if bh.trial >= self.limite_evaporacion:
-                        indices_para_evaporar.append(idx)
-                        self.f_crit *= (1 - self.delta_enfriamiento)
-                        conteo_evaporaciones += 1
+                    indices_para_evaporar.append(idx)
+                    self.f_crit *= (1 - self.delta_enfriamiento)
+                    conteo_evaporaciones += 1
             
             if indices_para_evaporar:
                 self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in indices_para_evaporar]
 
             # --- FASE 5: FUSIÓN POR PROXIMIDAD EXTREMA ---
-            if len(self.lista_bh) > 1:
+            num_bhs_final = len(self.lista_bh)
+            if num_bhs_final > 1:
                 mejor_bh_actual = max(self.lista_bh, key=lambda x: x.fitness)
                 marcados_para_eliminar = set()
+                matriz_bh_final = np.array([bh.vector_binario for bh in self.lista_bh])
                 
-                for i in range(len(self.lista_bh)):
-                    for j in range(i + 1, len(self.lista_bh)):
-                        if i in marcados_para_eliminar or j in marcados_para_eliminar:
+                for i in range(num_bhs_final):
+                    if i in marcados_para_eliminar:
+                        continue
+                    
+                    distancias_colision = np.count_nonzero(matriz_bh_final[i] != matriz_bh_final[i+1:], axis=1)
+                    
+                    for local_idx, dist in enumerate(distancias_colision):
+                        j = i + 1 + local_idx
+                        if j in marcados_para_eliminar:
                             continue
-                        
-                        dist = self.calcular_distancia_hamming(self.lista_bh[i].vector_binario, self.lista_bh[j].vector_binario)
+                            
                         if dist <= self.distancia_max_fusion:
                             conteo_colisiones += 1
-                            
                             if self.lista_bh[i] == mejor_bh_actual:
                                 marcados_para_eliminar.add(j)
                             elif self.lista_bh[j] == mejor_bh_actual:
@@ -326,7 +349,8 @@ class BBH_MMKP_UDP_Optimizer:
                                 else:
                                     marcados_para_eliminar.add(i)
                 
-                self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in marcados_para_eliminar]
+                if marcados_para_eliminar:
+                    self.lista_bh = [bh for idx, bh in enumerate(self.lista_bh) if idx not in marcados_para_eliminar]
 
             if len(self.lista_bh) == 0 and self.master_bh is not None:
                 self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
