@@ -9,7 +9,7 @@ class BlackHole:
 class BBH_MMKP_UDP_Optimizer:
     def __init__(self, datos_instancia, num_estrellas=25, max_iter=2000, pr=0.1, prob_slingshot=0.15, 
                  radio_horizonte=10, delta_incremento=0.005, distancia_max_fusion=2,
-                 limite_evaporacion=35, delta_enfriamiento=0.005):
+                 limite_evaporacion=35, delta_enfriamiento=0.005, extra_fcrit_inicial=0.0):
         
         self.datos = datos_instancia
         self.num_estrellas = num_estrellas
@@ -31,17 +31,29 @@ class BBH_MMKP_UDP_Optimizer:
         self.limite_evaporacion = limite_evaporacion
         self.delta_enfriamiento = delta_enfriamiento
         
+        # Nuevo parámetro de ajuste fino para el umbral
+        self.extra_fcrit_inicial = extra_fcrit_inicial
         self.f_crit = self.calcular_fcrit_inicial()
+        
         self.lista_bh = []
         self.poblacion = self.inicializar_poblacion_estrellas()
         
         # Guardián del Óptimo histórico absoluto del universo
         self.master_bh = None
 
+        # Contadores de telemetría global
+        self.max_bhs_simultaneos = 0
+        self.total_slingshots_gatillados = 0
+        self.slingshots_exitosos_fitness = 0
+        self.slingshots_factibles = 0
+        self.slingshots_infactibles_respawn = 0
+
     def calcular_fcrit_inicial(self):
-        """ calcula el umbral inicial basado en el beneficio promedio de los grupos """
+        """ calcula el umbral inicial basado en el beneficio promedio de los grupos y el delta manual """
         beneficios = self.datos['V_ij']
-        return float((np.sum(beneficios) / beneficios.size) * self.n_grupos)
+        base_fcrit = float((np.sum(beneficios) / beneficios.size) * self.n_grupos)
+        # Sumamos algebraicamente el parámetro de calibración
+        return base_fcrit + self.extra_fcrit_inicial
 
     class Estrella:
         def __init__(self, vector, fitness):
@@ -140,14 +152,22 @@ class BBH_MMKP_UDP_Optimizer:
         print(f"[bucle] umbral crítico inicial (f_crit): {self.f_crit:.2f}")
         
         for iteracion in range(self.max_iter):
-            # --- HORIZONTE DE EVENTOS ADAPTATIVO ---
-            
+            # =================================================================
+            # --- HORIZONTE DE EVENTOS ADAPTATIVO (SELECCIONAR PERFIL) ---
+            # =================================================================
             progreso = iteracion / self.max_iter
-            #self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * (1.0 - progreso)))  ####LINEAL
-            # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso))) #### EXPONENCIAL
-
-            factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5))) ##### SIGMOIDAL
-            #self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
+            
+            # OPCIÓN A: PERFIL LINEAL
+            # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * (1.0 - progreso)))
+            
+            # OPCIÓN B: PERFIL EXPONENCIAL (Enfriamiento Rápido)
+            # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso)))
+            
+            # OPCIÓN C: PERFIL SIGMOIDAL (Enfriamiento Balanceado)
+            factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5)))
+            self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
+            # =================================================================
+            
             conteo_evaporaciones = 0
             conteo_slingshot = 0
             conteo_colisiones = 0
@@ -160,6 +180,9 @@ class BBH_MMKP_UDP_Optimizer:
                     nuevo_bh = BlackHole(vector_binario=s.vector_binario.copy(), fitness=s.fitness)
                     self.lista_bh.append(nuevo_bh)
                     self.f_crit *= (1 + self.delta_incremento)
+            
+            if len(self.lista_bh) > self.max_bhs_simultaneos:
+                self.max_bhs_simultaneos = len(self.lista_bh)
             
             if len(self.lista_bh) > 0:
                 lider_actual = max(self.lista_bh, key=lambda x: x.fitness)
@@ -185,7 +208,7 @@ class BBH_MMKP_UDP_Optimizer:
                     distancias = [self.calcular_distancia_hamming(s.vector_binario, bh.vector_binario) for bh in self.lista_bh]
                     bh_asignado = self.lista_bh[np.argmin(distancias)]
                     
-                    # Atracción limpia por bloques de grupo 
+                    # Atracción limpia por bloques de grupo
                     for grupo, indices in self.mapeo_grupos.items():
                         if np.random.rand() < self.pr:
                             s.vector_binario[indices] = 0
@@ -194,14 +217,14 @@ class BBH_MMKP_UDP_Optimizer:
                     
                     s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                     
-                    # --- SLINGSHOT GUIADO POR ELITISMO INTEGRAL (CORREGIDO Y SEGURO) ---
+                    # --- SLINGSHOT GUIADO POR ELITISMO INTEGRAL ---
                     if self.calcular_distancia_hamming(s.vector_binario, bh_asignado.vector_binario) < self.radio_horizonte:
                         if np.random.rand() < self.prob_slingshot:
                             
+                            fitness_previo_estrella = s.fitness
                             todos_los_grupos = list(self.mapeo_grupos.keys())
                             np.random.shuffle(todos_los_grupos)
                             
-                            # Cambia el decimal si quieres ensayar otros porcentajes de conservación
                             limite_conservacion = max(1, int(self.n_grupos * 0.30))
                             grupos_a_conservar = set(todos_los_grupos[:limite_conservacion])
                             
@@ -209,18 +232,23 @@ class BBH_MMKP_UDP_Optimizer:
                                 s.vector_binario[indices] = 0 
                                 
                                 if grupo in grupos_a_conservar:
-                                    # Conserva copiando la coordenada estelar del Agujero Negro
                                     idx_activo_bh = indices[np.where(bh_asignado.vector_binario[indices] == 1)[0][0]]
                                     s.vector_binario[idx_activo_bh] = 1
                                 else:
-                                    # Prueba violenta al azar en el resto de la mochila
                                     nueva_opcion_azar = np.random.choice(indices)
                                     s.vector_binario[nueva_opcion_azar] = 1
                             
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                             conteo_slingshot += 1
+                            self.total_slingshots_gatillados += 1
                             
-                            if s.fitness == 0:
+                            if s.fitness > fitness_previo_estrella:
+                                self.slingshots_exitosos_fitness += 1
+                            
+                            if s.fitness > 0:
+                                self.slingshots_factibles += 1
+                            else:
+                                self.slingshots_infactibles_respawn += 1
                                 s.vector_binario = self.generar_solucion_estructurada_paper()
                                 s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                         else:
