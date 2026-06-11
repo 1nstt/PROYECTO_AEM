@@ -1,4 +1,9 @@
 import numpy as np
+import os
+import time
+from datetime import datetime
+from pathlib import Path
+import matplotlib.pyplot as plt
 
 class BlackHole:
     def __init__(self, vector_binario, fitness):
@@ -31,22 +36,30 @@ class BBH_MMKP_UDP_Optimizer:
         self.limite_evaporacion = limite_evaporacion
         self.delta_enfriamiento = delta_enfriamiento
         
-        # Nuevo parámetro de ajuste fino para el umbral
         self.extra_fcrit_inicial = extra_fcrit_inicial
         self.f_crit = self.calcular_fcrit_inicial()
         
         self.lista_bh = []
         self.poblacion = self.inicializar_poblacion_estrellas()
-        
-        # Guardián del Óptimo histórico absoluto del universo
         self.master_bh = None
 
-        # Contadores de telemetría global
+        # =================================================================
+        # NUEVOS CONTADORES Y TRAZADORES DE TELEMETRÍA AVANZADA
+        # =================================================================
         self.max_bhs_simultaneos = 0
+        self.total_bhs_creados_historico = 0  # Acumulador absoluto de colapsos estelares
         self.total_slingshots_gatillados = 0
         self.slingshots_exitosos_fitness = 0
         self.slingshots_factibles = 0
         self.slingshots_infactibles_respawn = 0
+
+        # Arrays históricos para curvas de convergencia (Métricas por generación/tiempo)
+        self.historial_iteraciones = []
+        self.historial_mejor_Z = []
+        self.historial_tiempo_cpu = []
+        self.historial_bhs_activos = []
+        self.historial_f_crit = []
+        # =================================================================
 
     def calcular_fcrit_inicial(self):
         """ calcula el umbral inicial basado en el beneficio promedio de los grupos y el delta manual """
@@ -60,10 +73,7 @@ class BBH_MMKP_UDP_Optimizer:
             self.fitness = fitness
 
     def generar_solucion_estructurada_paper(self):
-        """
-        Genera un único vector binario viable siguiendo estrictamente la 
-        estrategia initializeSolution del paper MABC.
-        """
+        """ Genera un único vector binario viable siguiendo initializeSolution de MABC """
         N_subproblemas = 4
         dh_intercambios = 10
         todos_los_grupos = list(self.mapeo_grupos.keys())
@@ -79,7 +89,6 @@ class BBH_MMKP_UDP_Optimizer:
             fin = inicio + grupos_por_subproblema
             sub_grupos = grupos_mezclados[inicio:fin]
             
-            # --- CONSTRUCCIÓN CODICIOSA ---
             for grupo in sub_grupos:
                 indices_items = self.mapeo_grupos[grupo]
                 recursos_items = self.datos['r_ij_k'][indices_items]
@@ -87,7 +96,6 @@ class BBH_MMKP_UDP_Optimizer:
                 mejor_item_local = indices_items[np.argmin(consumos_relativos)]
                 vec[mejor_item_local] = 1
 
-            # --- FASE DE INTERCAMBIOS CONTROLADOS ---
             d = 0
             intentos_max = 50
             intentos = 0
@@ -149,6 +157,8 @@ class BBH_MMKP_UDP_Optimizer:
         print(f"\n[bucle] comenzando simulación espacial con {self.num_estrellas} estrellas...")
         print(f"[bucle] umbral crítico inicial (f_crit): {self.f_crit:.2f}")
         
+        cronometro_inicio = time.time()
+
         for iteracion in range(self.max_iter):
             # =================================================================
             # --- HORIZONTE DE EVENTOS ADAPTATIVO (SELECCIONAR PERFIL) ---
@@ -158,12 +168,12 @@ class BBH_MMKP_UDP_Optimizer:
             # OPCIÓN A: PERFIL LINEAL
             # self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * (1.0 - progreso)))
             
-            # OPCIÓN B: PERFIL EXPONENCIAL (Enfriamiento Rápido)
+            # OPCIÓN B: PERFIL EXPONENCIAL
             self.radio_horizonte = max(2, int(self.radio_horizonte_inicial * np.exp(-3.0 * progreso)))
             
             # OPCIÓN C: PERFIL SIGMOIDAL 
-           # factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5)))
-           # self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
+            # factor_sigmoide = 1.0 / (1.0 + np.exp(10.0 * (progreso - 0.5)))
+            # self.radio_horizonte = max(2, int(2 + (self.radio_horizonte_inicial - 2) * factor_sigmoide))
             # =================================================================
             
             conteo_evaporaciones = 0
@@ -187,6 +197,7 @@ class BBH_MMKP_UDP_Optimizer:
                     if not ya_es_bh:
                         nuevo_bh = BlackHole(vector_binario=s.vector_binario.copy(), fitness=s.fitness)
                         self.lista_bh.append(nuevo_bh)
+                        self.total_bhs_creados_historico += 1 # Contador absoluto incremental
                         self.f_crit *= (1 + self.delta_incremento)
                         if matriz_bh is not None:
                             matriz_bh = np.vstack([matriz_bh, s.vector_binario])
@@ -221,12 +232,22 @@ class BBH_MMKP_UDP_Optimizer:
                     bh_asignado = self.lista_bh[idx_asignado]
                     dist_al_asignado = distancias[idx_asignado]
                     
-                    # Atracción limpia por bloques de grupo
+                    # Atracción limpia por bloques de grupo (PROTEGIDA)
                     for grupo, indices in self.mapeo_grupos.items():
                         if np.random.rand() < self.pr:
                             s.vector_binario[indices] = 0
-                            idx_activo_bh = indices[np.where(bh_asignado.vector_binario[indices] == 1)[0][0]]
-                            s.vector_binario[idx_activo_bh] = 1
+                            
+                            # Encontrar qué ítem tiene activo el BH en este grupo
+                            items_activos_bh = np.where(bh_asignado.vector_binario[indices] == 1)[0]
+                            
+                            if items_activos_bh.size > 0:
+                                # Comportamiento Normal: Copia al Agujero Negro
+                                idx_activo_bh = indices[items_activos_bh[0]]
+                                s.vector_binario[idx_activo_bh] = 1
+                            else:
+                                # Red de Seguridad: Si el BH está desestructurado, elige al azar
+                                idx_azar = np.random.choice(indices)
+                                s.vector_binario[idx_azar] = 1
                     
                     s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                     
@@ -244,8 +265,13 @@ class BBH_MMKP_UDP_Optimizer:
                                 s.vector_binario[indices] = 0 
                                 
                                 if grupo in grupos_a_conservar:
-                                    idx_activo_bh = indices[np.where(bh_asignado.vector_binario[indices] == 1)[0][0]]
-                                    s.vector_binario[idx_activo_bh] = 1
+                                    items_activos_bh = np.where(bh_asignado.vector_binario[indices] == 1)[0]
+                                    if items_activos_bh.size > 0:
+                                        idx_activo_bh = indices[items_activos_bh[0]]
+                                        s.vector_binario[idx_activo_bh] = 1
+                                    else:
+                                        idx_azar = np.random.choice(indices)
+                                        s.vector_binario[idx_azar] = 1
                                 else:
                                     nueva_opcion_azar = np.random.choice(indices)
                                     s.vector_binario[nueva_opcion_azar] = 1
@@ -261,11 +287,9 @@ class BBH_MMKP_UDP_Optimizer:
                                 self.slingshots_factibles += 1
                             else:
                                 self.slingshots_infactibles_respawn += 1
-                                # RECTIFICADO AQUÍ A ESPAÑOL:
                                 s.vector_binario = self.generar_solucion_estructurada_paper()
                                 s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
                         else:
-                            # RECTIFICADO AQUÍ A ESPAÑOL:
                             s.vector_binario = self.generar_solucion_estructurada_paper()
                             s.fitness = self.evaluar_fitness_mochila(s.vector_binario)
             else:
@@ -355,9 +379,23 @@ class BBH_MMKP_UDP_Optimizer:
             if len(self.lista_bh) == 0 and self.master_bh is not None:
                 self.lista_bh.append(BlackHole(vector_binario=self.master_bh.vector_binario.copy(), fitness=self.master_bh.fitness))
 
+            # =================================================================
+            # REGISTRO HISTÓRICO DE TELEMETRÍA (PASO A PASO)
+            # =================================================================
+            tiempo_actual_cpu = time.time() - cronometro_inicio
+            mejor_f_actual = max([bh.fitness for bh in self.lista_bh]) if len(self.lista_bh) > 0 else 0.0
+            if self.master_bh is not None and self.master_bh.fitness > mejor_f_actual:
+                mejor_f_actual = self.master_bh.fitness
+
+            self.historial_iteraciones.append(iteracion)
+            self.historial_mejor_Z.append(mejor_f_actual)
+            self.historial_tiempo_cpu.append(tiempo_actual_cpu)
+            self.historial_bhs_activos.append(len(self.lista_bh))
+            self.historial_f_crit.append(self.f_crit)
+            # =================================================================
+
             # --- reporte por consola ---
             if iteracion % 50 == 0 or iteracion == self.max_iter - 1:
-                mejor_f_actual = max([bh.fitness for bh in self.lista_bh]) if len(self.lista_bh) > 0 else 0.0
                 print(f"[iter {iteracion:04d}] "
                       f"mej_Z: {mejor_f_actual:<7.1f} | "
                       f"act_BHs: {len(self.lista_bh):<2d} | "
@@ -368,3 +406,77 @@ class BBH_MMKP_UDP_Optimizer:
                       f"f_crit: {self.f_crit:.1f}")
 
         return max(self.lista_bh, key=lambda x: x.fitness) if len(self.lista_bh) > 0 else self.master_bh
+
+    # =================================================================
+    # MÉTODO: GENERACIÓN DE REPORTES Y GRÁFICOS ESTRUCTURADOS (CON VECTOR COMPLETO)
+    # =================================================================
+    def generar_reportes_y_graficos(self, nombre_instancia, texto_consola):
+        """
+        Crea de forma automatizada la jerarquía de almacenamiento bajo la raíz:
+        proyecto meta / ejecuciones / {nombre_instancia} / EJECUCION_{fecha_hora} /
+        Guarda el log de consola, los gráficos y el vector binario completo de ceros y unos.
+        """
+        # 1. Encontrar la raíz real subiendo un nivel desde donde está clasebase.py
+        ruta_clasebase = Path(__file__).resolve()  
+        ruta_raiz_proyecto = ruta_clasebase.parent.parent  
+        
+        fecha_hora_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        
+        # Configurar la ruta de la carpeta de destino
+        carpeta_raiz = ruta_raiz_proyecto / "ejecuciones" / nombre_instancia / f"EJECUCION_{fecha_hora_str}"
+        carpeta_raiz.mkdir(parents=True, exist_ok=True)
+        
+        # 2. Extraer el vector binario de la mejor solución absoluta encontrada
+        mejor_bh = max(self.lista_bh, key=lambda x: x.fitness) if len(self.lista_bh) > 0 else self.master_bh
+        vector_completo_str = "\n▶ CONFIGURACIÓN DEL VECTOR BINARIO ÓPTIMO COMPLETO (X_ij):\n"
+        if mejor_bh is not None:
+            vector_completo_str += f"{mejor_bh.vector_binario.tolist()}\n"
+        else:
+            vector_completo_str += "[] (No se encontraron soluciones factibles)\n"
+        
+        # Unificar el texto que venía de afuera con el volcado del vector binario
+        reporte_final_con_vector = texto_consola + vector_completo_str + "=========================================================\n"
+        
+        # 3. Persistir archivo log_ejecucion.txt en el disco
+        archivo_txt = carpeta_raiz / "log_ejecucion.txt"
+        with open(archivo_txt, "w", encoding="utf-8") as f:
+            f.write(reporte_final_con_vector)
+        
+        # 4. Gráfico 1: Solución vs Generación (Iteraciones)
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.historial_iteraciones, self.historial_mejor_Z, color="blue", linewidth=2, label="Mejor Z")
+        plt.plot(self.historial_iteraciones, self.historial_f_crit, color="red", linestyle="--", alpha=0.7, label="Umbral f_crit")
+        plt.title(f"Curva de Convergencia por Generación - Instancia {nombre_instancia}")
+        plt.xlabel("Iteración / Generación")
+        plt.ylabel("Función Objetivo (Z)")
+        plt.grid(True, linestyle=":")
+        plt.legend()
+        plt.savefig(carpeta_raiz / "convergencia_por_generacion.png", dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        # 5. Gráfico 2: Solución vs Tiempo de Ejecución (CPU)
+        plt.figure(figsize=(10, 5))
+        plt.plot(self.historial_tiempo_cpu, self.historial_mejor_Z, color="green", linewidth=2, label="Mejor Z")
+        plt.title(f"Evolución del Rendimiento por Tiempo de CPU - Instancia {nombre_instancia}")
+        plt.xlabel("Tiempo total consumido por la CPU (Segundos)")
+        plt.ylabel("Función Objetivo (Z)")
+        plt.grid(True, linestyle=":")
+        plt.legend()
+        plt.savefig(carpeta_raiz / "convergencia_por_tiempo.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # 6. Gráfico 3: Dinámica Poblacional Estelar (BHs Activos)
+        plt.figure(figsize=(10, 4))
+        plt.plot(self.historial_iteraciones, self.historial_bhs_activos, color="purple", linewidth=1.5, label="BHs Activos simultáneos")
+        plt.title(f"Evolución Dinámica Poblacional de Atractores - Instancia {nombre_instancia}")
+        plt.xlabel("Iteración")
+        plt.ylabel("Cantidad de Agujeros Negros")
+        plt.grid(True, linestyle=":")
+        plt.legend()
+        plt.savefig(carpeta_raiz / "dinamica_poblacional.png", dpi=300, bbox_inches="tight")
+        plt.close()
+        
+        # 7. Desplegar el reporte unificado con el vector por la pantalla de la terminal
+        print(vector_completo_str)
+        print("=========================================================")
+        print(f"[sistema] Reportes, gráficos y vector guardados exitosamente en:\n ➔ {carpeta_raiz.resolve()}")
