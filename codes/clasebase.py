@@ -44,7 +44,7 @@ class BBH_MMKP_UDP_Optimizer:
         self.master_bh = None
 
         # =================================================================
-        # NUEVOS CONTADORES Y TRAZADORES DE TELEMETRÍA AVANZADA
+        # CONTADORES Y TRAZADORES DE TELEMETRÍA AVANZADA
         # =================================================================
         self.max_bhs_simultaneos = 0
         self.total_bhs_creados_historico = 0  # Acumulador absoluto de colapsos estelares
